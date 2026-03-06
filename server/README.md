@@ -1,93 +1,88 @@
-# 🤖 RAG PDFBot - Server
+# Interview Copilot - Server
 
-This is the FastAPI backend for the RAG PDFBot. It handles PDF processing, vectorstore embedding, LLM chain execution, and API endpoints.
+这是 `Interview Copilot` 的 FastAPI 后端，负责简历解析、向量检索、面试问题生成、回答评分、会话持久化和报告生成。
 
----
+## 核心能力
 
-## Features
+- 上传并处理简历 PDF
+- 构建 Chroma 向量库并执行证据检索
+- 驱动面试生命周期：
+  - 开始面试
+  - 逐轮评分
+  - 结束面试
+  - 生成报告
+- 基于简历证据返回结构化 `sources`
+- 提供接口级自动化测试
 
-- ✅ Upload and process PDFs
-- 🧠 Chat with LLM using vectorstore retrieval
-- 🔍 Inspect document chunks via similarity search
-- 🌐 Supports multiple providers (Groq, Gemini)
+## 目录结构
 
----
-
-## Project Structure
-
-```
+```text
 server/
-├── api/                        # FastAPI routes and schemas
-├── config/                     # Environment and constants
-├── core/                       # LLM logic, vectorstore, processing
-├── utils/                      # Logger and helpers
-├── main.py                     # App entry point
+├── api/                        # FastAPI 路由与 Schema
+├── config/                     # 配置与环境变量
+├── core/                       # 文档处理、向量库、LLM、会话存储
+├── tests/                      # pytest 测试
+├── utils/                      # 日志与工具
+└── main.py                     # 应用入口
 ```
 
----
-
-## 📦 Installation
-
-1. **Clone the repo**
-
-```bash
-git clone https://github.com/Zlash65/rag-bot-fastapi.git
-cd rag-bot-fastapi
-```
-
-2. **Create a virtual environment (optional)**
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-3. **Install dependencies**
+## 安装
 
 ```bash
 cd server
-
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 ```
 
----
+## 配置
 
-## Configuration
+在 [config/settings.py](/D:/Desktop/study/rag-bot-fastapi/server/config/settings.py) 中读取环境变量：
 
-Set your API keys in `config/settings.py`:
-
-- **Groq**: [console.groq.com](https://console.groq.com/)
-- **Gemini**: [ai.google.dev](https://ai.google.dev)
-
-```python
-GROQ_API_KEY = "your_groq_key"
-GOOGLE_API_KEY = "your_google_key"
+```env
+DEEPSEEK_API_KEY=your_api_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-chat
+SIMILARITY_THRESHOLD=1.4
 ```
 
----
+当前后端仅保留 `deepseek` 模型提供商。
 
-## ▶️ Usage
-
-Run the app:
+## 启动
 
 ```bash
-cd rag-bot-fastapi/server
-
-uvicorn main:app --reload
+cd server
+python -m uvicorn main:app
 ```
 
----
+服务默认地址：
 
-## API Endpoints
+```text
+http://127.0.0.1:8000
+```
 
-- `/upload_and_process_pdfs`
-- `/chat`
-- `/vector_store/count/{provider}`
-- `/vector_store/search`
-- `/llm`
-- `/llm/{provider}`
-- `/health`
+## 主要接口
 
-## Logging
+- `POST /upload_and_process_pdfs`
+- `POST /interview/start`
+- `POST /interview/answer`
+- `POST /interview/end`
+- `GET /interview/report/{session_id}`
+- `POST /vector_store/search`
+- `GET /vector_store/count/{model_provider}`
+- `GET /llm`
+- `GET /llm/{model_provider}`
+- `GET /health`
 
-Logs are printed to the console and controlled via `utils/logger.py`.
+## 测试
+
+运行接口测试：
+
+```bash
+python -m pytest tests/test_api.py -q
+```
+
+## 实现说明
+
+- 简历会被切块后写入 Chroma 向量库
+- 面试问题由 LLM 按轮生成
+- 每轮评分基于当前问题、简历证据和最近几轮摘要
+- 会话当前持久化到本地 JSON 文件，适合单机演示

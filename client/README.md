@@ -1,111 +1,63 @@
-# 🧠 RAG PDFBot - Client
+# Interview Copilot - Client
 
-This is the Streamlit-based frontend for the RAG PDFBot. It allows users to upload PDF files, ask questions, inspect responses, and download chat history.
+这是 `Interview Copilot` 的 Streamlit 前端，负责简历上传、岗位 JD 输入、面试控制、对话流展示与报告查看。
 
----
+## 核心能力
 
-## Features
+- 上传简历 PDF 并提交到后端处理
+- 选择模型并填写岗位 JD
+- 显式开始和结束模拟面试
+- 使用单一输入框完成多轮问答
+- 查看并下载面试报告
 
-- 📄 Upload and chat with multiple PDFs
-- 🧠 Choose between LLM providers (Groq, Gemini)
-- 🔬 Inspector to test direct vectorstore queries
-- 📥 Downloadable chat history
+## 目录结构
 
----
-
-## Project Structure
-
-```
+```text
 client/
-├── app.py                      # Main Streamlit entry point
-├── state/
-│   └── session.py              # Handles session state setup
+├── app.py                      # Streamlit 入口
 ├── components/
-│   ├── chat.py                 # All chat-related UI: input, history, uploads
-│   ├── sidebar.py              # All sidebar elements: model selector, upload, inspect
-│   └── inspector.py            # Inspector to test vectorstore responses
-├── utils/
-│   ├── api.py                  # Server communication
-│   ├── config.py               # API_URL etc.
-│   └── helpers.py              # High-level orchestration (calls to api.py)
+│   ├── chat.py                 # 面试对话流与统一输入框
+│   ├── interview.py            # 报告展示
+│   ├── inspector.py            # 遗留调试组件
+│   └── sidebar.py              # 模型、上传、JD、工具区
+├── state/
+│   └── session.py              # Session State 初始化
+└── utils/
+    ├── api.py                  # 后端接口调用
+    └── helpers.py              # 前端编排逻辑
 ```
 
----
-
-## 📦 Installation
-
-1. **Clone the repo**
-
-```bash
-git clone https://github.com/Zlash65/rag-bot-fastapi.git
-cd rag-bot-fastapi
-```
-
-2. **Create a virtual environment (optional)**
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-3. **Install dependencies**
+## 安装
 
 ```bash
 cd client
-
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 ```
 
----
-
-## ▶️ Usage
-
-Run the app:
+## 启动
 
 ```bash
-cd rag-bot-fastapi/client
-
-streamlit run app.py
+cd client
+python -m streamlit run app.py
 ```
 
-Steps:
-1. Select a model provider (Groq or Gemini)
-2. Enter your API key
-3. Choose a model
-4. Upload one or more PDFs
-5. Click **Submit**
-6. Ask questions about the uploaded PDFs in the chat input
+默认地址：
 
----
-
-## Configuration
-
-Set `API_URL` in `client/utils/config.py` to your FastAPI server:
-```python
-API_URL = "http://127.0.0.1:8000"
+```text
+http://localhost:8501
 ```
 
----
+## 使用流程
 
-## 🧼 Tools Panel
+1. 选择模型
+2. 上传简历 PDF 并提交
+3. 填写岗位 JD
+4. 点击开始面试
+5. 在主界面逐轮回答问题
+6. 点击结束面试并查看报告
 
-- **🔄 Reset**: Clears session state and reruns app
-- **🧹 Clear Chat**: Clears chat + PDF submission
-- **↩️ Undo**: Removes last question/response
+## 界面说明
 
----
-
-## 📦 Download Chat History
-
-Chat history is saved in the session state and can be exported as a CSV with the following columns:
-
-| Question | Answer | Model Provider | Model Name | PDF File | Timestamp |
-|----------|--------|----------------|------------|---------------------|-----------|
-| What is this PDF about? | This PDF explains... | Groq | llama3-70b-8192 | file1.pdf, file2.pdf | 2025-07-03 21:00:00 |
-
----
-
-## ⚠️ Notes
-
-- Ensure the backend (FastAPI) server is running before launching the client.
-- Chat and Inspector require PDFs to be uploaded and processed first.
+- 主界面采用类聊天产品形态
+- 面试消息、用户回答、评分反馈显示在同一条消息流中
+- 侧边栏负责配置、上传、JD 输入和面试控制
