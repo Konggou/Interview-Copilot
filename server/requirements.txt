@@ -1,8 +1,6 @@
 fastapi
 uvicorn
 langchain-community
-langchain-groq
-langchain-google-genai
 chromadb
 sentence-transformers
 pypdf
@@ -10,3 +8,4 @@ python-dotenv
 python-multipart
 aiofiles
 tiktoken
+pytest

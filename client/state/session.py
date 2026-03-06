@@ -3,21 +3,38 @@ import streamlit as st
 
 def setup_session_state():
   default_state = {
-    "chat_history": [],             # Stores tuples of (question, answer, provider, model, pdfs, timestamp)
-    "chat_ready": False,            # Tracks whether chat is ready to receive user input
-    "pdf_files": [],                # Currently submitted PDF files
-    "last_provider": None,          # Tracks last selected provider for dynamic reloading
-    "unsubmitted_files": False,     # Tracks whether new files were uploaded but not submitted
-    "uploader_key": 0               # Used to reset file_uploader widget
+    "resume_ready": False,
+    "pdf_files": [],
+    "model_provider": "Deepseek",
+    "model": "deepseek-reasoner",
+    "interview_status": "draft",
+    "interview_session_id": "",
+    "interview_job_description": "",
+    "interview_opening_style": "",
+    "interview_current_question": None,
+    "interview_progress": {},
+    "interview_transcript": [],
+    "interview_turns": [],
+    "interview_rubric": {},
+    "interview_report": {},
+    "interview_report_markdown": "",
+    "last_provider": None,
+    "unsubmitted_files": False,
+    "uploader_key": 0,
   }
 
   for key, default in default_state.items():
     if key not in st.session_state:
       st.session_state[key] = default
 
-def is_chat_ready():
+
+def is_resume_ready():
   return (
-    st.session_state.get("chat_ready")
+    st.session_state.get("resume_ready")
     and st.session_state.get(f"uploaded_files_{st.session_state.uploader_key}", [])
     and not st.session_state.get("unsubmitted_files")
   )
+
+
+def is_interview_active():
+  return st.session_state.get("interview_status") == "active"
