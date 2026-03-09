@@ -7,7 +7,7 @@ from state.session import is_interview_active, is_resume_ready
 from utils.helpers import (
   end_interview_session,
   load_interview_report,
-  start_interview_session,
+  start_interview_session_stream,
 )
 
 
@@ -20,19 +20,43 @@ def _render_bullet_section(title: str, items: list[str]):
     st.markdown(f"- {item}")
 
 
-def _start_interview(model_provider, model_name):
-  with st.spinner("\u6b63\u5728\u542f\u52a8\u6a21\u62df\u9762\u8bd5..."):
+def request_interview_start():
+  st.session_state.pending_interview_start = True
+  st.session_state.interview_start_error = ""
+
+
+def render_pending_interview_start(model_provider, model_name):
+  if not st.session_state.get("pending_interview_start"):
+    return
+
+  streamed_text = ""
+  with st.chat_message("assistant"):
+    stream_placeholder = st.empty()
+
     try:
-      result = start_interview_session(
+      for event in start_interview_session_stream(
         model_provider,
         model_name,
         st.session_state.get("interview_job_description", ""),
         st.session_state.get("interview_opening_style", ""),
-      )
-      seed_interview_session(result)
-      st.toast("\u6a21\u62df\u9762\u8bd5\u5df2\u5f00\u59cb\u3002")
-      st.rerun()
+      ):
+        if event["event"] == "delta":
+          streamed_text += event["data"].get("text", "")
+          stream_placeholder.markdown(streamed_text)
+        elif event["event"] == "done":
+          st.session_state.pending_interview_start = False
+          st.session_state.interview_start_error = ""
+          stream_placeholder.empty()
+          result = event["data"]["payload"]
+          seed_interview_session(result)
+          st.toast("\u6a21\u62df\u9762\u8bd5\u5df2\u5f00\u59cb\u3002")
+          st.rerun()
+        elif event["event"] == "error":
+          raise Exception(event["data"].get("message", "\u542f\u52a8\u9762\u8bd5\u5931\u8d25"))
     except Exception as e:
+      st.session_state.pending_interview_start = False
+      st.session_state.interview_start_error = str(e)
+      stream_placeholder.empty()
       st.error(f"\u9519\u8bef\uff1a{str(e)}")
 
 
@@ -90,28 +114,32 @@ def render_interview_sidebar_controls(model_provider, model_name):
     placeholder="\u4f8b\u5982\uff1a\u7b80\u6d01\u76f4\u63a5 / \u66f4\u50cf\u5927\u5382\u6280\u672f\u4e00\u9762 / \u504f\u538b\u529b\u9762",
   )
 
-  start_disabled = not is_resume_ready() or is_interview_active()
+  start_disabled = (
+    not is_resume_ready()
+    or is_interview_active()
+    or st.session_state.get("pending_interview_start", False)
+  )
   end_disabled = not is_interview_active()
   report_disabled = (
     not st.session_state.get("interview_session_id")
     or st.session_state.get("interview_status") != "ended"
   )
 
-  st.button(
+  if st.button(
     "\u5f00\u59cb\u9762\u8bd5",
     use_container_width=True,
     key="start_interview_button",
-    on_click=_start_interview,
-    args=(model_provider, model_name),
     disabled=start_disabled,
-  )
-  st.button(
+  ):
+    request_interview_start()
+
+  if st.button(
     "\u7ed3\u675f\u9762\u8bd5",
     use_container_width=True,
     key="end_interview_button",
-    on_click=_end_interview,
     disabled=end_disabled,
-  )
+  ):
+    _end_interview()
 
   session_id = st.session_state.get("interview_session_id", "")
   if session_id and st.button(

@@ -1,7 +1,7 @@
 import streamlit as st
 
 from state.session import is_interview_active
-from utils.helpers import score_interview_answer
+from utils.helpers import score_interview_answer_stream
 
 
 MAX_STORED_SOURCES = 2
@@ -33,6 +33,8 @@ def reset_interview_view_state():
   st.session_state.update(
     interview_session_id="",
     interview_status="draft",
+    pending_interview_start=False,
+    interview_start_error="",
     interview_current_question=None,
     interview_progress={},
     interview_transcript=[],
@@ -167,36 +169,67 @@ def _handle_interview_answer(model_provider, model, user_answer: str):
 
   with st.chat_message("user"):
     st.markdown(user_answer)
-  with st.chat_message("assistant"):
-    with st.spinner("\u9762\u8bd5\u5b98\u6b63\u5728\u8bc4\u4f30\u4f60\u7684\u56de\u7b54..."):
-      try:
-        result = score_interview_answer(
-          model_provider,
-          model,
-          session_id,
-          question_id,
-          user_answer,
-        )
-        feedback_text = _build_feedback_text(result)
-        sources = result.get("sources", [])
-        st.markdown(feedback_text)
-        render_sources(sources)
+  feedback_text = ""
+  next_question_text = ""
+  feedback_sources = []
+  feedback_placeholder = None
+  next_placeholder = None
 
-        append_interview_message("user", user_answer)
-        append_interview_message("assistant", feedback_text, sources)
-        _append_turn_result(question_id, question_text, user_answer, result)
+  try:
+    with st.chat_message("assistant"):
+      feedback_placeholder = st.empty()
+      for event in score_interview_answer_stream(
+        model_provider,
+        model,
+        session_id,
+        question_id,
+        user_answer,
+      ):
+        if event["event"] == "delta":
+          phase = event["data"].get("phase")
+          text = event["data"].get("text", "")
+          if phase == "feedback":
+            feedback_text += text
+            feedback_placeholder.markdown(feedback_text)
+          elif phase == "next_question":
+            if next_placeholder is None:
+              next_placeholder = st.empty()
+            next_question_text += text
+            next_placeholder.markdown(next_question_text)
+        elif event["event"] == "meta":
+          if event["data"].get("phase") == "feedback" and event["data"].get("status") == "complete":
+            feedback_text = event["data"].get("rendered_text", feedback_text)
+            feedback_sources = event["data"].get("payload", {}).get("sources", [])
+            feedback_placeholder.markdown(feedback_text)
+            render_sources(feedback_sources)
+            if next_placeholder is None:
+              next_placeholder = st.empty()
+        elif event["event"] == "done":
+          result = event["data"]["payload"]
+          feedback_text = _build_feedback_text(result)
+          feedback_sources = result.get("sources", [])
+          feedback_placeholder.markdown(feedback_text)
+          render_sources(feedback_sources)
 
-        next_question = result.get("next_question")
-        st.session_state.interview_current_question = next_question
-        st.session_state.interview_progress = result.get("progress", {})
-        st.session_state.interview_status = result.get("status", "active")
+          append_interview_message("user", user_answer)
+          append_interview_message("assistant", feedback_text, feedback_sources)
+          _append_turn_result(question_id, question_text, user_answer, result)
 
-        if next_question:
-          next_message = f"\u9762\u8bd5\u5b98\uff1a{next_question.get('question', '')}"
-          st.markdown(next_message)
-          append_interview_message("assistant", next_message)
-      except Exception as e:
-        st.error(f"\u9519\u8bef\uff1a{str(e)}")
+          next_question = result.get("next_question")
+          st.session_state.interview_current_question = next_question
+          st.session_state.interview_progress = result.get("progress", {})
+          st.session_state.interview_status = result.get("status", "active")
+
+          if next_question:
+            next_message = f"\u9762\u8bd5\u5b98\uff1a{next_question.get('question', '')}"
+            if next_placeholder is None:
+              next_placeholder = st.empty()
+            next_placeholder.markdown(next_message)
+            append_interview_message("assistant", next_message)
+        elif event["event"] == "error":
+          raise Exception(event["data"].get("message", "\u6d41\u5f0f\u56de\u590d\u5931\u8d25"))
+  except Exception as e:
+    st.error(f"\u9519\u8bef\uff1a{str(e)}")
 
 
 def render_unified_input(model_provider, model):

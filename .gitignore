@@ -209,3 +209,5 @@ __marimo__/
 # Rag Bot
 data/
 temp/
+.agent/
+.codex-tmp/

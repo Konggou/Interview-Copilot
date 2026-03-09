@@ -1,13 +1,12 @@
 from utils.api import (
-  answer_interview,
-  chat,
   end_interview,
   get_interview_report,
   get_supported_llm,
   get_supported_models,
   get_vectorstore_colllection_count,
   get_vectorstore_similarity_search,
-  start_interview,
+  stream_answer_interview,
+  stream_start_interview,
   upload_and_process_pdfs,
 )
 
@@ -26,27 +25,23 @@ def process_uploaded_pdfs(model_provider, uploaded_files) -> str:
   return upload_and_process_pdfs(model_provider, uploaded_files)
 
 
-def process_user_input(model_provider, model_name, user_input) -> dict:
-  return chat(model_provider, model_name, user_input)
-
-
-def start_interview_session(
+def start_interview_session_stream(
   model_provider,
   model_name,
   jd_text="",
   opening_style="",
-) -> dict:
-  return start_interview(model_provider, model_name, jd_text, opening_style)
+):
+  return stream_start_interview(model_provider, model_name, jd_text, opening_style)
 
 
-def score_interview_answer(
+def score_interview_answer_stream(
   model_provider,
   model_name,
   session_id,
   question_id,
   user_answer,
-) -> dict:
-  return answer_interview(
+):
+  return stream_answer_interview(
     model_provider,
     session_id,
     question_id,

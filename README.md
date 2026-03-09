@@ -1,5 +1,29 @@
 # Interview Copilot
 
+## Production Notes
+
+- The project now supports `docker-compose up` with three services: `api`, `client`, and `redis`.
+- Runtime secrets were moved to environment variables. Copy `.env.example` to `.env` before starting locally or with Docker.
+- FastAPI now exposes streaming endpoints for live token rendering:
+  - `POST /chat/stream`
+  - `POST /interview/start/stream`
+  - `POST /interview/answer/stream`
+- Redis is used for semantic response caching, and LLM responses expose `X-Cache: HIT|MISS`.
+- Observability endpoints are available at `GET /health` and `GET /metrics`.
+
+### Docker Quick Start
+
+```bash
+cp .env.example .env
+docker-compose up --build
+```
+
+Default ports:
+
+- FastAPI: `http://127.0.0.1:8000`
+- Streamlit: `http://127.0.0.1:8501`
+- Redis: `redis://127.0.0.1:6379/0`
+
 `Interview Copilot` 是一个基于简历知识库的 AI 模拟面试系统。用户上传简历 PDF、填写岗位 JD 后，系统会以技术面试官视角发起多轮面试，并基于简历证据对回答进行评分、追问和报告生成。
 
 当前项目采用前后端分离架构：
@@ -44,7 +68,6 @@ rag-bot-fastapi/
 │   ├── components/
 │   │   ├── chat.py                # 面试对话流与统一输入框
 │   │   ├── interview.py           # 面试报告展示
-│   │   ├── inspector.py           # 遗留调试组件
 │   │   └── sidebar.py             # 模型、上传、JD、工具区
 │   ├── state/
 │   │   └── session.py

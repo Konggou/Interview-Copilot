@@ -1,8 +1,10 @@
+import asyncio
 import hashlib
 import os
 
-from typing import List
 from fastapi import UploadFile
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from config.settings import (
   DEEPSEEK_API_KEY,
@@ -15,10 +17,6 @@ from core.document_processor import (
   save_uploaded_file,
   split_documents_to_chunks,
 )
-
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-
 from utils.logger import logger
 
 
@@ -28,26 +26,28 @@ _VECTORSTORE_CACHE = {}
 
 def vectorstore_exists(persist_path: str) -> bool:
   exists = os.path.exists(persist_path) and bool(os.listdir(persist_path))
-  logger.debug(f"Vectorstore exists at {persist_path}: {exists}")
+  logger.debug("vectorstore_exists", persist_path=persist_path, exists=exists)
   return exists
 
 
 def get_embeddings(model_provider: str):
   model_provider = model_provider.lower()
   if model_provider in _EMBEDDINGS_CACHE:
-    logger.debug(f"Using cached embeddings for provider: {model_provider}")
     return _EMBEDDINGS_CACHE[model_provider]
 
   if model_provider != "deepseek":
-    logger.error(f"Unsupported LLM Provider: {model_provider}")
     raise ValueError(f"Unsupported LLM Provider: {model_provider}")
 
-  logger.debug(f"Getting embeddings for provider: {model_provider}")
   embedding = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L12-v2"
+    model_name="sentence-transformers/all-MiniLM-L12-v2",
   )
   _EMBEDDINGS_CACHE[model_provider] = embedding
   return embedding
+
+
+async def embed_query_text(model_provider: str, text: str) -> list[float]:
+  embedding = get_embeddings(model_provider)
+  return await asyncio.to_thread(embedding.embed_query, text)
 
 
 def _normalize_source(raw_source: str) -> str:
@@ -74,10 +74,8 @@ def _prepare_chunks_for_upsert(chunks):
 def _create_vectorstore_instance(model_provider: str):
   persist_path = VECTORSTORE_DIRECTORY[model_provider]
   if not vectorstore_exists(persist_path):
-    logger.debug(f"VectorStore not found for provider: {model_provider}")
     raise ValueError(f"VectorStore not found for provider: {model_provider}")
 
-  logger.debug(f"Loading existing vectorstore for provider: {model_provider}")
   return Chroma(
     persist_directory=persist_path,
     embedding_function=get_embeddings(model_provider),
@@ -108,13 +106,13 @@ def serialize_search_results(
   return serialized_results
 
 
-def retrieve_scored_chunks(
+async def retrieve_scored_chunks(
   model_provider: str,
   query: str,
   k: int = 3,
   threshold: float = SIMILARITY_THRESHOLD,
 ):
-  results = find_similar_chunks(model_provider, query, k=k)
+  results = await find_similar_chunks(model_provider, query, k=k)
   top_score = results[0][1] if results else None
   return {
     "results": results,
@@ -124,11 +122,11 @@ def retrieve_scored_chunks(
   }
 
 
-def initialize_empty_vectorstores():
-  logger.info("Initializing empty vectorstores...")
+async def initialize_empty_vectorstores():
+  logger.info("Initializing empty vectorstores")
 
   if not DEEPSEEK_API_KEY:
-    logger.debug("Skipping deepseek vectorstore init because DEEPSEEK_API_KEY is not set.")
+    logger.warning("Skipping vectorstore initialization because DEEPSEEK_API_KEY is not set")
     return
 
   provider = "deepseek"
@@ -136,70 +134,64 @@ def initialize_empty_vectorstores():
   os.makedirs(persist_path, exist_ok=True)
 
   if not os.listdir(persist_path):
-    vectorstore = Chroma(
+    vectorstore = await asyncio.to_thread(
+      Chroma,
       embedding_function=get_embeddings(provider),
       persist_directory=persist_path,
     )
     _VECTORSTORE_CACHE[provider] = vectorstore
-    logger.debug(f"Initialized vectorstore for {provider} at {persist_path}")
 
-  logger.info("Vectorstore initialization complete.")
+  logger.info("Vectorstore initialization complete")
 
 
-async def upsert_vectorstore_from_pdfs(uploaded_files: List[UploadFile], model_provider: str):
+async def upsert_vectorstore_from_pdfs(
+  uploaded_files: list[UploadFile],
+  model_provider: str,
+):
   model_provider = model_provider.lower()
-  logger.debug(f"Upserting vectorstore for {model_provider}")
-
   file_paths = await save_uploaded_file(uploaded_files)
-  docs = load_documents_from_paths(file_paths)
-  chunks = split_documents_to_chunks(docs)
+  docs = await asyncio.to_thread(load_documents_from_paths, file_paths)
+  chunks = await asyncio.to_thread(split_documents_to_chunks, docs)
   chunks, chunk_ids = _prepare_chunks_for_upsert(chunks)
 
   persist_path = VECTORSTORE_DIRECTORY[model_provider]
   embedding = get_embeddings(model_provider)
 
   if vectorstore_exists(persist_path):
-    logger.debug("Appending to existing vectorstore...")
-    vectorstore = Chroma(
+    vectorstore = await asyncio.to_thread(
+      Chroma,
       persist_directory=persist_path,
       embedding_function=embedding,
     )
-    vectorstore.add_documents(chunks, ids=chunk_ids)
-    logger.debug(f"Added {len(chunks)} chunks to existing vectorstore.")
+    await asyncio.to_thread(vectorstore.add_documents, chunks, ids=chunk_ids)
   else:
-    vectorstore = Chroma.from_documents(
+    vectorstore = await asyncio.to_thread(
+      Chroma.from_documents,
       documents=chunks,
       embedding=embedding,
       persist_directory=persist_path,
       ids=chunk_ids,
     )
-    logger.debug(f"Created new vectorstore with {len(chunks)} chunks.")
 
   _VECTORSTORE_CACHE[model_provider] = vectorstore
   return vectorstore
 
 
-def load_vectorstore(model_provider: str):
+async def load_vectorstore(model_provider: str):
   model_provider = model_provider.lower()
   if model_provider in _VECTORSTORE_CACHE:
-    logger.debug(f"Using cached vectorstore for provider: {model_provider}")
     return _VECTORSTORE_CACHE[model_provider]
 
-  vectorstore = _create_vectorstore_instance(model_provider)
+  vectorstore = await asyncio.to_thread(_create_vectorstore_instance, model_provider)
   _VECTORSTORE_CACHE[model_provider] = vectorstore
   return vectorstore
 
 
-def get_collections_count(model_provider: str):
-  logger.debug(f"Getting collection count for provider: {model_provider}")
-  vectorstore = load_vectorstore(model_provider)
-  return vectorstore._collection.count()
+async def get_collections_count(model_provider: str):
+  vectorstore = await load_vectorstore(model_provider)
+  return await asyncio.to_thread(vectorstore._collection.count)
 
 
-def find_similar_chunks(model_provider: str, query: str, k: int = 3):
-  logger.debug(f"Searching for similar provider: {model_provider}")
-  vectorstore = load_vectorstore(model_provider)
-  results = vectorstore.similarity_search_with_score(query, k=k)
-  for result, score in results:
-    logger.debug(f"Similarity search result: {result}, score: {score}")
-  return results
+async def find_similar_chunks(model_provider: str, query: str, k: int = 3):
+  vectorstore = await load_vectorstore(model_provider)
+  return await asyncio.to_thread(vectorstore.similarity_search_with_score, query, k)

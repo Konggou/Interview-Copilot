@@ -6,6 +6,7 @@ from components.chat import (
   render_uploaded_files_expander,
 )
 from components.interview import render_interview_report
+from components.interview import render_pending_interview_start
 from components.sidebar import (
   render_interview_setup,
   render_model_selector,
@@ -159,6 +160,8 @@ SIDEBAR_THEME_CSS = """
 
 [data-testid="stSidebar"] .stFileUploader section,
 [data-testid="stSidebar"] .stFileUploader section * ,
+[data-testid="stSidebar"] .stFileUploader [data-testid="stFileUploaderFile"],
+[data-testid="stSidebar"] .stFileUploader [data-testid="stFileUploaderFile"] *,
 [data-testid="stSidebar"] .stFileUploader small,
 [data-testid="stSidebar"] .stFileUploader button {
   color: #1f2937 !important;
@@ -319,6 +322,7 @@ def main():
       section_copy = "\u8bf7\u5148\u5728\u5de6\u4fa7\u586b\u5199\u5c97\u4f4d JD \u5e76\u70b9\u51fb\u201c\u5f00\u59cb\u9762\u8bd5\u201d\uff0c\u7136\u540e\u5728\u5e95\u90e8\u8f93\u5165\u6846\u56de\u7b54\u3002"
 
     _render_section_header("\u9762\u8bd5\u5bf9\u8bdd", section_copy)
+    render_pending_interview_start(model_provider, model)
     render_interview_history()
     render_interview_report()
     render_unified_input(model_provider, model)

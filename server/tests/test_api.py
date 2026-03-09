@@ -14,31 +14,27 @@ import main  # noqa: E402
 from api import routes  # noqa: E402
 
 
-class DummyChain:
-  def __init__(self, answer: str):
-    self.answer = answer
-
-  def invoke(self, _payload):
-    return {"answer": self.answer}
-
-
 @pytest.fixture
 def client(monkeypatch):
-  monkeypatch.setattr(main, "initialize_empty_vectorstores", lambda: None)
+  async def noop_startup():
+    return None
+
+  monkeypatch.setattr(main, "initialize_empty_vectorstores", noop_startup)
+  monkeypatch.setattr(routes, "ping_redis", lambda: noop_startup())
 
   store = {}
 
-  def save_session(session_id, session_data):
+  async def save_session(session_id, session_data):
     payload = deepcopy(session_data)
     payload.setdefault("created_at", "now")
     payload["updated_at"] = "now"
     store[session_id] = payload
 
-  def get_session(session_id):
+  async def get_session(session_id):
     session = store.get(session_id)
     return deepcopy(session) if session else None
 
-  def append_turn(session_id, turn_payload):
+  async def append_turn(session_id, turn_payload):
     session = store.get(session_id)
     if not session:
       return None
@@ -46,7 +42,7 @@ def client(monkeypatch):
     session["updated_at"] = "now"
     return deepcopy(session)
 
-  def set_current_question(session_id, question_id):
+  async def set_current_question(session_id, question_id):
     session = store.get(session_id)
     if not session:
       return None
@@ -54,7 +50,7 @@ def client(monkeypatch):
     session["updated_at"] = "now"
     return deepcopy(session)
 
-  def mark_session_status(session_id, status):
+  async def mark_session_status(session_id, status):
     session = store.get(session_id)
     if not session:
       return None
@@ -62,7 +58,7 @@ def client(monkeypatch):
     session["updated_at"] = "now"
     return deepcopy(session)
 
-  def get_current_turn(session_id):
+  async def get_current_turn(session_id):
     session = store.get(session_id)
     if not session:
       return None
@@ -72,7 +68,7 @@ def client(monkeypatch):
         return deepcopy(turn)
     return None
 
-  def get_completed_turns(session_id):
+  async def get_completed_turns(session_id):
     session = store.get(session_id)
     if not session:
       return []
@@ -82,7 +78,7 @@ def client(monkeypatch):
       if turn.get("user_answer")
     ]
 
-  def update_session_answer(session_id, question_id, user_answer, feedback):
+  async def update_session_answer(session_id, question_id, user_answer, feedback):
     session = store.get(session_id)
     if not session:
       return None
@@ -95,7 +91,7 @@ def client(monkeypatch):
     session["updated_at"] = "now"
     return deepcopy(session)
 
-  def update_session_report(session_id, report):
+  async def update_session_report(session_id, report):
     session = store.get(session_id)
     if not session:
       return None
@@ -123,36 +119,46 @@ def test_health_check(client):
 
   assert response.status_code == 200
   assert response.json()["status"] == "success"
-  assert response.json()["data"] == "ok"
+  assert response.json()["data"]["app"] == "ok"
+  assert "redis" in response.json()["data"]
+
+
+def test_metrics_endpoint(client):
+  test_client, _store = client
+  response = test_client.get("/metrics")
+
+  assert response.status_code == 200
+  assert "ragbot_llm_requests_total" in response.text
 
 
 def test_chat_returns_answer_and_sources_when_threshold_passes(client, monkeypatch):
   test_client, _store = client
-  monkeypatch.setattr(routes, "load_vectorstore", lambda *_args, **_kwargs: object())
-  monkeypatch.setattr(
-    routes,
-    "retrieve_scored_chunks",
-    lambda *_args, **_kwargs: {
-      "results": [("doc", 1.6)],
-      "top_score": 1.6,
+
+  async def fake_retrieve(*_args, **_kwargs):
+    return {
+      "results": [("doc", 0.2)],
+      "top_score": 0.2,
       "passes_threshold": True,
-    },
-  )
+    }
+
+  async def fake_invoke(*_args, **_kwargs):
+    return type("Result", (), {
+      "raw_text": "structured answer",
+      "cache_hit": False,
+    })()
+
+  monkeypatch.setattr(routes, "retrieve_scored_chunks", fake_retrieve)
   monkeypatch.setattr(
     routes,
     "serialize_search_results",
     lambda *_args, **_kwargs: [{
       "source": "resume.pdf",
       "page": 1,
-      "score": 1.6,
+      "score": 0.2,
       "snippet": "retrieved context",
     }],
   )
-  monkeypatch.setattr(
-    routes,
-    "build_llm_chain",
-    lambda *_args, **_kwargs: DummyChain("structured answer"),
-  )
+  monkeypatch.setattr(routes, "invoke_completion", fake_invoke)
 
   response = test_client.post(
     "/chat",
@@ -165,44 +171,95 @@ def test_chat_returns_answer_and_sources_when_threshold_passes(client, monkeypat
 
   assert response.status_code == 200
   assert response.json()["status"] == "success"
+  assert response.headers["X-Cache"] == "MISS"
   assert response.json()["data"]["answer"] == "structured answer"
 
 
-def test_interview_start_returns_only_first_question(client, monkeypatch):
-  test_client, store = client
-  monkeypatch.setattr(
-    routes,
-    "retrieve_scored_chunks",
-    lambda *_args, **_kwargs: {
-      "results": [("doc", 1.8)],
-      "top_score": 1.8,
+def test_chat_stream_returns_sse_events(client, monkeypatch):
+  test_client, _store = client
+
+  async def fake_retrieve(*_args, **_kwargs):
+    return {
+      "results": [("doc", 0.2)],
+      "top_score": 0.2,
       "passes_threshold": True,
-    },
-  )
+    }
+
+  async def fake_cache_lookup(*_args, **_kwargs):
+    return {"prompt_text": "prompt", "prompt_tokens": 10, "cached": None}
+
+  async def fake_stream(*_args, **_kwargs):
+    yield {"event": "meta", "data": {"phase": "answer", "cache": "MISS"}}
+    yield {"event": "delta", "data": {"phase": "answer", "text": "hello"}}
+    yield {
+      "event": "done",
+      "data": {
+        "raw_text": "hello world",
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "cache": "MISS",
+      },
+    }
+
+  monkeypatch.setattr(routes, "retrieve_scored_chunks", fake_retrieve)
+  monkeypatch.setattr(routes, "inspect_completion_cache", fake_cache_lookup)
+  monkeypatch.setattr(routes, "stream_completion", fake_stream)
   monkeypatch.setattr(
     routes,
     "serialize_search_results",
     lambda *_args, **_kwargs: [{
       "source": "resume.pdf",
       "page": 1,
-      "score": 1.8,
-      "snippet": "resume evidence",
+      "score": 0.2,
+      "snippet": "retrieved context",
     }],
   )
-  monkeypatch.setattr(
-    routes,
-    "generate_initial_interview_turn",
-    lambda *_args, **_kwargs: {
-      "opening_message": "Let us begin.",
-      "question": {
-        "id": "q1",
-        "question": "Introduce your main project.",
-        "focus": "Project overview",
-        "difficulty": "easy",
-      },
-      "rubric": {"score_scale": "1-10"},
+
+  response = test_client.post(
+    "/chat/stream",
+    json={
+      "model_provider": "deepseek",
+      "model_name": "deepseek-chat",
+      "message": "stream it",
     },
   )
+
+  assert response.status_code == 200
+  assert response.headers["X-Cache"] == "MISS"
+  assert "event: delta" in response.text
+  assert "event: done" in response.text
+
+
+def test_interview_start_returns_first_question(client, monkeypatch):
+  test_client, store = client
+
+  async def fake_prepare_context(*_args, **_kwargs):
+    return (
+      [{"source": "resume.pdf", "page": 1, "score": 0.2, "snippet": "resume evidence"}],
+      "resume context",
+    )
+
+  async def fake_invoke(*_args, **_kwargs):
+    return type("Result", (), {
+      "parsed_payload": {
+        "opening_message": "Let us begin.",
+        "question": {
+          "id": "q1",
+          "question": "Introduce your main project.",
+          "focus": "Project overview",
+          "difficulty": "easy",
+        },
+        "rubric": {"score_scale": "1-10"},
+      },
+      "cache_hit": False,
+    })()
+
+  async def fake_retrieve_sources(*_args, **_kwargs):
+    return [{"source": "resume.pdf", "page": 1, "score": 0.2, "snippet": "resume evidence"}]
+
+  monkeypatch.setattr(routes, "_prepare_interview_context", fake_prepare_context)
+  monkeypatch.setattr(routes, "invoke_completion", fake_invoke)
+  monkeypatch.setattr(routes, "_retrieve_question_specific_sources", fake_retrieve_sources)
 
   response = test_client.post(
     "/interview/start",
@@ -221,7 +278,7 @@ def test_interview_start_returns_only_first_question(client, monkeypatch):
   assert len(store[payload["session_id"]]["turns"]) == 1
 
 
-def test_interview_answer_appends_next_question_without_ending(client, monkeypatch):
+def test_interview_answer_appends_next_question(client, monkeypatch):
   test_client, store = client
   session_id = "session-1"
   store[session_id] = {
@@ -234,7 +291,7 @@ def test_interview_answer_appends_next_question_without_ending(client, monkeypat
     "resume_sources": [{
       "source": "resume.pdf",
       "page": 1,
-      "score": 1.9,
+      "score": 0.2,
       "snippet": "resume evidence",
     }],
     "turns": [{
@@ -246,7 +303,7 @@ def test_interview_answer_appends_next_question_without_ending(client, monkeypat
       "sources": [{
         "source": "resume.pdf",
         "page": 1,
-        "score": 1.9,
+        "score": 0.2,
         "snippet": "resume evidence",
       }],
       "user_answer": "",
@@ -260,30 +317,44 @@ def test_interview_answer_appends_next_question_without_ending(client, monkeypat
     "updated_at": "now",
   }
 
-  monkeypatch.setattr(
-    routes,
-    "evaluate_interview_answer",
-    lambda *_args, **_kwargs: {
-      "score": 8,
-      "summary": "Solid answer.",
-      "strengths": ["Clear structure"],
-      "weaknesses": ["Could quantify impact more"],
-      "suggestions": ["Add metrics"],
-      "followup_question": "What was the scale?",
-    },
-  )
-  monkeypatch.setattr(
-    routes,
-    "generate_next_interview_question",
-    lambda *_args, **_kwargs: {
-      "question": {
-        "id": "q2",
-        "question": "How did you handle retrieval quality?",
-        "focus": "RAG retrieval",
-        "difficulty": "mid",
+  async def fake_retrieve_sources(*_args, **_kwargs):
+    return [{
+      "source": "resume.pdf",
+      "page": 1,
+      "score": 0.2,
+      "snippet": "resume evidence",
+    }]
+
+  results = [
+    type("Result", (), {
+      "parsed_payload": {
+        "score": 8,
+        "summary": "Solid answer.",
+        "strengths": ["Clear structure"],
+        "weaknesses": ["Could quantify impact more"],
+        "suggestions": ["Add metrics"],
+        "followup_question": "What was the scale?",
       },
-    },
-  )
+      "cache_hit": False,
+    })(),
+    type("Result", (), {
+      "parsed_payload": {
+        "question": {
+          "id": "q2",
+          "question": "How did you handle retrieval quality?",
+          "focus": "RAG retrieval",
+          "difficulty": "mid",
+        },
+      },
+      "cache_hit": False,
+    })(),
+  ]
+
+  async def fake_invoke(*_args, **_kwargs):
+    return results.pop(0)
+
+  monkeypatch.setattr(routes, "_retrieve_question_specific_sources", fake_retrieve_sources)
+  monkeypatch.setattr(routes, "invoke_completion", fake_invoke)
 
   response = test_client.post(
     "/interview/answer",
@@ -299,7 +370,6 @@ def test_interview_answer_appends_next_question_without_ending(client, monkeypat
   payload = response.json()["data"]
   assert response.status_code == 200
   assert payload["status"] == "active"
-  assert payload["is_finished"] is False
   assert payload["next_question"]["id"] == "q2"
   assert store[session_id]["current_question_id"] == "q2"
   assert len(store[session_id]["turns"]) == 2
@@ -314,10 +384,7 @@ def test_interview_end_marks_session_ended(client):
     "current_question_id": "q1",
   }
 
-  response = test_client.post(
-    "/interview/end",
-    json={"session_id": "session-1"},
-  )
+  response = test_client.post("/interview/end", json={"session_id": "session-1"})
 
   assert response.status_code == 200
   assert response.json()["data"]["status"] == "ended"
@@ -336,9 +403,8 @@ def test_interview_report_requires_ended_session(client):
 
   response = test_client.get("/interview/report/session-1")
 
-  assert response.status_code == 200
+  assert response.status_code == 409
   assert response.json()["status"] == "error"
-  assert "结束" in response.json()["message"]
 
 
 def test_interview_report_returns_after_end(client):

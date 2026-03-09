@@ -1,19 +1,37 @@
 import logging
-from pathlib import Path
+import sys
 
-def setup_logger(name="ragbot") -> logging.Logger:
-  logger = logging.getLogger(name)
-  logger.setLevel(logging.DEBUG)
+import structlog
 
-  # Formatter
-  formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] - %(message)s")
+from config.settings import LOG_LEVEL
 
-  if not logger.hasHandlers():
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
 
-  return logger
+def setup_logger():
+  timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
+
+  logging.basicConfig(
+    format="%(message)s",
+    stream=sys.stdout,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+  )
+
+  structlog.configure(
+    processors=[
+      structlog.contextvars.merge_contextvars,
+      structlog.processors.add_log_level,
+      timestamper,
+      structlog.processors.StackInfoRenderer(),
+      structlog.processors.format_exc_info,
+      structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(
+      getattr(logging, LOG_LEVEL, logging.INFO),
+    ),
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=True,
+  )
+
+  return structlog.get_logger("ragbot")
+
 
 logger = setup_logger()

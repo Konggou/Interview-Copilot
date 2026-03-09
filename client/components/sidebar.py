@@ -47,24 +47,31 @@ def _get_model_options(model_provider: str):
 
 def render_model_selector():
   providers = _get_provider_options()
-  default_provider = st.session_state.get("model_provider", "Deepseek")
-  provider_index = providers.index(default_provider) if default_provider in providers else 0
+  if not providers:
+    st.session_state["model_provider"] = ""
+    st.session_state["model"] = ""
+    return "", ""
+
+  if st.session_state.get("model_provider") not in providers:
+    st.session_state["model_provider"] = providers[0]
 
   model_provider = st.selectbox(
     "\u6a21\u578b\u63d0\u4f9b\u5546",
     options=providers,
-    index=provider_index if providers else None,
     key="model_provider",
   )
 
   models = _get_model_options(model_provider)
-  default_model = st.session_state.get("model", "deepseek-reasoner")
-  model_index = models.index(default_model) if default_model in models else 0
+  if not models:
+    st.session_state["model"] = ""
+    return model_provider or "", ""
+
+  if st.session_state.get("model") not in models:
+    st.session_state["model"] = models[0]
 
   model = st.selectbox(
     "\u6a21\u578b\u540d\u79f0",
     options=models,
-    index=model_index if models else None,
     disabled=not model_provider,
     key="model",
   )

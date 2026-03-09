@@ -18,6 +18,8 @@ def setup_session_state():
     "interview_rubric": {},
     "interview_report": {},
     "interview_report_markdown": "",
+    "pending_interview_start": False,
+    "interview_start_error": "",
     "last_provider": None,
     "unsubmitted_files": False,
     "uploader_key": 0,
